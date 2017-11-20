@@ -212,10 +212,14 @@ class FCSParser(object):
         try:
             raw_text = raw_text.decode('utf-8')
         except UnicodeDecodeError as e:
-            logger.warning(u'Encountered an illegal utf-8 byte in the header.\n Illegal utf-8 '
+            try:
+                raw_text = raw_text.decode('latin-1')
+            except e:
+                logger.warning(u'Encountered an illegal utf-8 byte in the header.\n Illegal utf-8 '
                            u'characters will be ignored.\n The illegal byte was {} at '
                            u'position {}.'.format(repr(e.object[e.start]), e.start))
-            raw_text = raw_text.decode('utf-8', 'ignore')
+                raw_text = raw_text.decode('utf-8', 'ignore')
+
 
         #####
         # Parse the TEXT segment of the FCS file into a python dictionary
