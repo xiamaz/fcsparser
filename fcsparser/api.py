@@ -24,6 +24,77 @@ import six
 
 logger = logging.getLogger(__name__)
 
+LOG_AMP_ERROR = "$PnG used for logarithmic amplification"
+
+
+def pne_png_rescaling(meta, data, png=True):
+    """Perform $PnE rescaling on provided data. This will linearize logarithmic
+    channels.
+    :param meta: Metadata dictionary.
+    :param data: Data as pandas dataframe.
+    :param png: Option whether to apply png rescaling or not.
+
+    :return: Tuple of metadata and data
+    """
+    num_channels = int(meta["$PAR"])
+    # get f1, f2 and $PnR values as numpy arrays
+    pne = numpy.array([
+        [float(n) for n in meta[f"$P{i}E"].split(",")]
+        for i in range(1, num_channels + 1)
+    ])
+    f1, f2 = [a.reshape(-1) for a in numpy.split(pne, 2, axis=1)]
+
+    # handle cases with f1 > 0 and f2 == 0, follow fcs spec recommendation
+    invalid_f2 = (f1 > 0) & (f2 == 0)
+    f2[invalid_f2] = 1
+
+    log_channels = ((f1 > 0) & (f2 > 0))
+
+    pnr = numpy.array([
+        float(meta[f"$P{i}R"])
+        for i in range(1, num_channels + 1)
+    ])
+
+    # copy data into new dataframe
+    moddata = data.copy()
+    modmeta = meta.copy()
+
+    # optionally do png rescaling for linear amplified channels
+    if png:
+        png = numpy.array([
+            float(meta[f"$P{i}G"]) for i in range(1, num_channels + 1)
+        ])
+        # $PnG should only be used for linear channels
+        assert all((png == 1) | (~log_channels)), LOG_AMP_ERROR
+
+        linear_amp_channels = png > 1
+        # rescale with formula: xs = xc / g
+        moddata.loc[:, linear_amp_channels] = moddata.loc[
+            :, linear_amp_channels] / png[linear_amp_channels]
+
+        for i in numpy.arange(1, num_channels + 1)[linear_amp_channels]:
+            modmeta[f"$P{i}G"] = "1.0"
+            modmeta[f"$P{i}R"] = str(
+                int(int(modmeta[f"$P{i}R"]) / png[i - 1] + 0.5)
+            )
+
+    # linear rescaling for logarithmically amplified channels
+    sf1 = f1[log_channels]
+    sf2 = f2[log_channels]
+    spnr = pnr[log_channels]
+
+    # linearize with formula: xs = 10^(xc / f1 * r) * f2
+    moddata.loc[:, log_channels] = numpy.power(
+        10, moddata.loc[:, log_channels] * (sf1 / spnr)) * sf2
+    # also modify metadata
+    for i in numpy.arange(1, num_channels + 1)[log_channels]:
+        modmeta[f"$P{i}E"] = "0,0"  # set all to zero
+        modmeta[f"$P{i}R"] = str(int(
+            numpy.power(10, f1[i - 1]) * f2[i - 1]
+        ))
+
+    return modmeta, moddata
+
 
 def fromfile(file, dtype, count, *args, **kwargs):
     """Wrapper around np.fromfile to support any file-like object."""
@@ -482,7 +553,7 @@ class FCSParser(object):
 
 
 def parse(path, meta_data_only=False, compensate=False, channel_naming='$PnS',
-          reformat_meta=False, data_set=0, dtype='float32', encoding="utf-8"):
+          reformat_meta=False, data_set=0, dtype='float32', encoding="utf-8", linearize=False):
     """Parse an fcs file at the location specified by the path.
 
     Parameters
@@ -519,6 +590,8 @@ def parse(path, meta_data_only=False, compensate=False, channel_naming='$PnS',
         data, but should make follow up analysis safer in basically all cases.
     encoding: str
         Provide encoding type of the text section.
+    linearize: bool
+        Linearize logarithmically amplified channels and normalize linear amplified channels
 
 
     Returns
@@ -554,5 +627,7 @@ def parse(path, meta_data_only=False, compensate=False, channel_naming='$PnS',
         return meta
     else:  # Then include both meta and dataframe.
         df = fcs_parser.dataframe
+        if linearize:
+            meta, df = pne_png_rescaling(meta, df)
         df = df.astype(dtype) if dtype else df
         return meta, df
