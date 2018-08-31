@@ -88,9 +88,11 @@ def pne_png_rescaling(meta, data, png=True):
         10, moddata.loc[:, log_channels] * (sf1 / spnr)) * sf2
     # also modify metadata
     for i in numpy.arange(1, num_channels + 1)[log_channels]:
+        modmeta[f"fcsparser_$P{i}R_min"] = str(f2[i - 1])
+        modmeta[f"fcsparser_$P{i}R_max"] = str(pnr[i - 1])
+        modmeta[f"fcsparser_log_decades"] = str(f1[ - 1])
         modmeta[f"$P{i}E"] = "0,0"  # set all to zero
         modmeta[f"$P{i}R"] = str(int(numpy.power(10, f1[i - 1]) * f2[i - 1]))
-        modmeta[f"$fcsparser_$PnR_min"] = str(f2)
 
     return modmeta, moddata
 
